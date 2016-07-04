@@ -1,0 +1,654 @@
+<%
+(function () {
+
+
+    var log = new Log();
+    var carbon = require('carbon');
+    var configs = require('/configs/designer.json');
+    var utils = require('/modules/utils.js');
+    var JSUtils = Packages.org.wso2.carbon.analytics.jsservice.Utils;
+    var AnalyticsCachedJSServiceConnector = Packages.org.wso2.carbon.analytics.jsservice.AnalyticsCachedJSServiceConnector;
+    var AnalyticsCache = Packages.org.wso2.carbon.analytics.jsservice.AnalyticsCachedJSServiceConnector.AnalyticsCache;
+
+    var CONTENT_TYPE_JSON = "application/json";
+    var AUTHORIZATION_HEADER = "Authorization";
+    var USER_TOKEN = "user";
+    var TYPE = "type";
+    var TENANT_DOMAIN = "domain";
+    var CONST_AT = "@";
+    var USERNAME = "username";
+    var HTTP_INTERNAL_ERROR = 500;
+    var HTTP_USER_NOT_AUTHENTICATED = 403;
+    var tenantDomain = null;
+    //Filters and content search
+    var API_RESPONSE_TIMES_CONTENT = 1;
+    var APPLICATION_THROTTLED_OUT_REQUEST_CONTENT = 2;
+    var APPLICATION_THROTTLED_OUT_APP_FILTER = 4;
+    var API_LAST_ACCESS_TIME_CONTENT = 5;
+    var API_USAGE_BY_RESOURCE_PATH_CONTENT = 6;
+    var API_USAGE_COMPARISON_CONTENT = 7;
+    var API_USAGE_BY_DESTINATION_CONTENT = 8;
+    var API_THROTTLED_OUT_REQUESTS_CONTENT = 9;
+    var API_THROTTLED_OUT_APP_FILTER = 10;
+    var API_SUBSCRIPTIONS_CONTENT = 11;
+    var API_FAULTY_INVOCATION_CONTENT = 12;
+
+
+    //Table Names
+    var API_RESPONSE_SUMMARY = "API_RESPONSE_SUMMARY";
+    var API_THROTTLED_OUT_SUMMARY = "API_THROTTLED_OUT_SUMMARY";
+    var API_LAST_ACCESS_TIME_SUMMARY = "API_LAST_ACCESS_TIME_SUMMARY";
+    var API_RESOURCE_USAGE_SUMMARY = "API_RESOURCE_USAGE_SUMMARY";
+    var API_VERSION_USAGE_SUMMARY = "API_VERSION_USAGE_SUMMARY";
+    var API_FAULT_SUMMARY = "API_FAULT_SUMMARY";
+    var API_REQUEST_SUMMARY = "API_REQUEST_SUMMARY";
+
+
+    if (configs.cacheTimeoutSeconds) {
+        cacheTimeoutSeconds = parseInt(configs.cacheTimeoutSeconds);
+    }
+    var cacheSizeBytes = 1024 * 1024 * 1024; // 1GB
+    if (configs.cacheSizeBytes) {
+        cacheSizeBytes = parseInt(configs.cacheSizeBytes);
+    }
+
+    response.contentType = CONTENT_TYPE_JSON;
+    var username = null;
+    var authParam = request.getHeader(AUTHORIZATION_HEADER);
+    if (authParam != null) {
+        credentials = JSUtils.authenticate(authParam);
+        loggedInUser = credentials[0];
+        username = loggedInUser;
+    } else {
+        var token = session.get(USER_TOKEN);
+        if (token != null) {
+            loggedInUser = token[USERNAME];
+            tenantDomain = token[TENANT_DOMAIN];
+            username = loggedInUser + CONST_AT + tenantDomain;
+        } else {
+            log.error("user is not authenticated!");
+            response.status = HTTP_USER_NOT_AUTHENTICATED;
+            print('{ "status": "Failed", "message": "User is not authenticated." }');
+            return;
+        }
+    }
+
+
+    var cache = application.get("AnalyticsWebServiceCache");
+    if (cache == null) {
+        cache = new AnalyticsCache(cacheTimeoutSeconds, cacheSizeBytes);
+        application.put("AnalyticsWebServiceCache", cache);
+    }
+
+    var connector = new AnalyticsCachedJSServiceConnector(cache);
+
+    var type = 0;
+    var typeParam = request.getParameter(TYPE);
+    if (typeParam != null) {
+        type = parseInt(typeParam);
+    }
+
+    if (type == 0) {
+        log.error("operation type is not specified!");
+        response.status = HTTP_INTERNAL_ERROR;
+        print('{ "status": "Failed", "message": "Operation type is not specified" }');
+        return;
+    }
+
+    var content = request.getContent();
+    if (content != '' && content != null) {
+        if (log.isDebugEnabled()) {
+            log.debug("value of content: " + stringify(content));
+        }
+    }
+
+    if (connector != null && loggedInUser != null) {
+
+        var result = null;
+        var query = null;
+        var resp = null;
+
+        switch (type) {
+            case API_RESPONSE_TIMES_CONTENT:
+            {
+                result = [];
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+
+                var tableName = API_RESPONSE_SUMMARY;
+
+                var queryServiceTime = stringify({
+                    tableName: tableName,
+                    fieldName: "api_version_context_facet", //field which is indexed as a FACET
+                    categoryPath: [], //Path being drilled down, optional
+                    query: "_apiPublisher:" + username + " AND  max_request_time  : [" + timeFrom + " TO " + timeTo + "]",
+                    categoryPath: [], //Path being drilled down, optional
+                    //search query, optional
+                    scoreFunction: "serviceTime",
+                    start: 0,
+                    count: 100
+                });
+                var queryResponseCount = stringify({
+                    tableName: tableName,
+                    fieldName: "api_version_context_facet", //field which is indexed as a FACET
+                    categoryPath: [], //Path being drilled down, optional
+                    query: "_apiPublisher:" + username + " AND  max_request_time  : [" + timeFrom + " TO " + timeTo + "]",
+                    categoryPath: [], //Path being drilled down, optional
+                    //search query, optional
+                    scoreFunction: "total_response_count",
+                    start: 0,
+                    count: 100
+                });
+
+                resp = connector.drillDownCategories(loggedInUser, tableName, queryServiceTime);
+                var responseCount = connector.drillDownCategories(loggedInUser, tableName, queryResponseCount);
+                var dataPoints = JSON.parse(resp.getMessage());
+                var dataPointsCounts = JSON.parse(responseCount.getMessage());
+                var objServiceTime = dataPoints.categories;
+                var objCounts = dataPointsCounts.categories;
+                var dataPointsArray = [];
+
+                for (var key in objServiceTime) {
+                    for (var countKey in objCounts) {
+                        if (objServiceTime.hasOwnProperty(key) && objCounts.hasOwnProperty(countKey) && key == countKey) {
+                            var roundTime = objServiceTime[key] / objCounts[countKey];
+                            roundTime = +roundTime.toFixed(2);
+                            dataPointsArray.push({
+                                "API": key,
+                                "Time": roundTime
+                            });
+                        }
+                    }
+                }
+
+                result.push(dataPointsArray);
+                result.push(Object.keys(objServiceTime).length);
+                break;
+            }
+            case APPLICATION_THROTTLED_OUT_REQUEST_CONTENT:
+            {
+                result = [];
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+                var selectedAppValue = request.getParameter("selectedAppValue");
+
+                var tableName = API_THROTTLED_OUT_SUMMARY;
+                var query = stringify({
+                    tableName: tableName,
+                    groupByField: "api_year_month_week_day_facet",
+                    parentPath: [],
+                    aggregateLevel: 0,
+                    query: "tenantDomain:" + tenantDomain + " AND applicationName:" + selectedAppValue + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    fields: [
+                        {
+                            fieldName: "success_request_count",
+                            aggregate: "SUM",
+                            alias: "total_SuccessCount"
+                        },
+                        {
+                            fieldName: "throttleout_count",
+                            aggregate: "SUM",
+                            alias: "total_throttleout_count"
+                        }
+                    ]
+                });
+
+                var resp = connector.searchWithAggregates(loggedInUser, tableName, query);
+                var dataPoints = JSON.parse(resp.getMessage());
+                var dataPointsArray = [];
+
+                for (var i = 0; i < dataPoints.length; i++) {
+                    var obj = dataPoints[i];
+
+                    dataPointsArray.push({
+                        "key": obj.values.api_year_month_week_day_facet,
+                        "value": obj.values.total_SuccessCount,
+                        "EngineType": "Success"
+                    });
+                    dataPointsArray.push({
+                        "key": obj.values.api_year_month_week_day_facet,
+                        "value": obj.values.total_throttleout_count,
+                        "EngineType": "Throttled"
+                    });
+                }
+                result.push(dataPointsArray);
+                result.push(dataPoints.length);
+
+                break;
+            }
+            case APPLICATION_THROTTLED_OUT_APP_FILTER:
+            {
+                result = [];
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+                var tableName = API_THROTTLED_OUT_SUMMARY;
+                query = stringify({
+                    tableName: tableName,
+                    fieldName: "applicationName_facet", //field which is indexed as a FACET
+                    query: "_apiPublisher:" + username + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    start: 0,
+                    count: 100
+                });
+
+                resp = connector.drillDownCategories(loggedInUser, tableName, query);
+                var dataPoints = JSON.parse(resp.getMessage());
+                var obj = dataPoints.categories;
+                var dataPointsArray = [];
+                var counter = 0;
+
+                for (var key in obj) {
+                    if (obj.hasOwnProperty(key)) {
+                        dataPointsArray.push({
+                            "id": counter,
+                            "text": key
+                        });
+                        counter = counter + 1;
+                    }
+                }
+                result.push(dataPointsArray);
+
+                break;
+            }
+            case API_LAST_ACCESS_TIME_CONTENT:
+            {
+                result = {};
+                var tableName = API_LAST_ACCESS_TIME_SUMMARY;
+                var columns = [];
+                columns = ['api', 'version', 'userId', 'max_request_time'];
+                var query = stringify({
+                    "query": "_apiPublisher:" + username,
+                    "start": 0,
+                    "count": 10
+
+                });
+                var resp = connector.search(loggedInUser, tableName, query);
+                var dataPoints = JSON.parse(resp.getMessage());
+                var dataPointsArray = [];
+
+                for (var index = 0; index < dataPoints.length; index++) {
+                    var tempArray = [];
+                    for (var key in columns) {
+                        if (columns[key] == 'max_request_time') {
+                            // multiplied by 1000 so that the argument is in milliseconds, not seconds.
+                            var date = new Date(dataPoints[index].values[columns[key]]);
+                            // Hours part from the timestamp
+                            var hours = date.getHours();
+                            // Minutes part from the timestamp
+                            var minutes = "0" + date.getMinutes();
+                            // Seconds part from the timestamp
+                            var seconds = "0" + date.getSeconds();
+                            // Will display time in 10:30:23 format
+                            var formattedTime = date.getDate() + '/' + (date.getMonth() + 1) + '/' + date.getFullYear() + " " + hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
+
+                            tempArray.push(formattedTime);
+                        } else {
+                            tempArray.push(dataPoints[index].values[columns[key]]);
+                        }
+                    }
+                    dataPointsArray.push(tempArray);
+
+                }
+                result["data"] = dataPointsArray;
+                result["recordsFiltered"] = dataPointsArray.length;
+                result["recordsTotal"] = dataPointsArray.length;
+
+                break;
+            }
+            case API_USAGE_BY_RESOURCE_PATH_CONTENT :
+            {
+
+                result = {};
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+                var draw = request.getParameter("draw");
+
+                var tableName = API_RESOURCE_USAGE_SUMMARY;
+                var dataPointsArray = [];
+                var query = stringify({
+                    tableName: tableName,
+                    groupByField: "api_version_context_method_facet",
+                    parentPath: [],
+                    aggregateLevel: 3,
+                    query: "_apiPublisher:" + username + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    fields: [
+                        {
+                            fieldName: "total_request_count",
+                            aggregate: "SUM",
+                            alias: "total_RequestCount"
+                        }
+                    ]
+                });
+
+                var resp = connector.searchWithAggregates(loggedInUser, tableName, query);
+                var dataPoints = JSON.parse(resp.getMessage());
+
+                for (var key in dataPoints) {
+                    var tempArray = [];
+                    tempArray = dataPoints[key].values["api_version_context_method_facet"];
+                    tempArray.push(dataPoints[key].values["total_RequestCount"]);
+                    dataPointsArray.push(tempArray);
+                }
+
+                result["draw"] = draw;
+                result["data"] = dataPointsArray;
+                result["recordsFiltered"] = dataPointsArray.length;
+                result["recordsTotal"] = dataPointsArray.length;
+                break;
+            }
+            case API_USAGE_COMPARISON_CONTENT:
+            {
+                result = [];
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+                var tableName = API_VERSION_USAGE_SUMMARY;
+
+                var dataPointsArray = [];
+                var query = stringify({
+                    tableName: tableName,
+                    groupByField: "api_version_context_facet",
+                    parentPath: [],
+                    aggregateLevel: 2,
+                    query: "_apiPublisher:" + username + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    fields: [
+                        {
+                            fieldName: "total_request_count",
+                            aggregate: "SUM",
+                            alias: "total_RequestCount"
+                        }
+                    ]
+                });
+
+                var resp = connector.searchWithAggregates(loggedInUser, tableName, query);
+                var dataPoints = JSON.parse(resp.getMessage());
+
+                for (var key in dataPoints) {
+                    var tempArray = [];
+                    tempArray = dataPoints[key].values["api_version_context_facet"];
+                    dataPointsArray.push({
+                        "Api": tempArray[0] + ":" + tempArray[1],
+                        "Request_Count": dataPoints[key].values["total_RequestCount"]
+                    });
+                }
+                result.push(dataPointsArray);
+                result.push(dataPointsArray.length);
+                break;
+            }
+            case API_USAGE_BY_DESTINATION_CONTENT :
+            {
+
+                result = {};
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+                var draw = request.getParameter("draw");
+
+                var tableName = "API_DESTINATION_SUMMARY";
+                var dataPointsArray = [];
+                var query = stringify({
+                    tableName: tableName,
+                    groupByField: "api_version_context_dest_facet",
+                    parentPath: [],
+                    aggregateLevel: 3,
+                    query: "_apiPublisher:" + username + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    fields: [
+                        {
+                            fieldName: "total_request_count",
+                            aggregate: "SUM",
+                            alias: "total_RequestCount"
+                        }
+                    ]
+                });
+
+                var resp = connector.searchWithAggregates(loggedInUser, tableName, query);
+                var dataPoints = JSON.parse(resp.getMessage());
+
+                for (var key in dataPoints) {
+                    var tempArray = [];
+                    tempArray = dataPoints[key].values["api_version_context_dest_facet"];
+                    tempArray.push(dataPoints[key].values["total_RequestCount"]);
+                    dataPointsArray.push(tempArray);
+                }
+                result["draw"] = draw;
+                result["data"] = dataPointsArray;
+                result["recordsFiltered"] = dataPointsArray.length;
+                result["recordsTotal"] = dataPointsArray.length;
+                break;
+            }
+            case API_THROTTLED_OUT_REQUESTS_CONTENT:
+            {
+                result = [];
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+                var selectedAppValue = request.getParameter("selectedAppValue");
+                var selectedApiValue = request.getParameter("selectedApiValue");
+
+                var tableName = API_THROTTLED_OUT_SUMMARY;
+                var query = stringify({
+                    tableName: tableName,
+                    groupByField: "api_year_month_week_day_facet",
+                    parentPath: [],
+                    aggregateLevel: 4,
+                    query: "tenantDomain:" + tenantDomain + " AND api:" + selectedApiValue + " AND applicationName:" + selectedAppValue + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    fields: [
+                        {
+                            fieldName: "success_request_count",
+                            aggregate: "SUM",
+                            alias: "total_SuccessCount"
+                        },
+                        {
+                            fieldName: "throttleout_count",
+                            aggregate: "SUM",
+                            alias: "total_throttleout_count"
+                        }
+                    ]
+                });
+
+                var resp = connector.searchWithAggregates(loggedInUser, tableName, query);
+                var dataPoints = JSON.parse(resp.getMessage());
+                var dataPointsArray = [];
+
+                for (var i = 0; i < dataPoints.length; i++) {
+                    var obj = dataPoints[i];
+                    dataPointsArray.push({
+                        "key": obj.values.api_year_month_week_day_facet[4] + "/" + obj.values.api_year_month_week_day_facet[2],
+                        "value": obj.values.total_SuccessCount,
+                        "EngineType": "Success"
+                    });
+                    dataPointsArray.push({
+                        "key": obj.values.api_year_month_week_day_facet[4] + "/" + obj.values.api_year_month_week_day_facet[2],
+                        "value": obj.values.total_throttleout_count,
+                        "EngineType": "Throttled"
+                    });
+                }
+                result.push(dataPointsArray);
+                result.push(dataPointsArray.length);
+                break;
+            }
+            case API_THROTTLED_OUT_APP_FILTER:
+            {
+                result = [];
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+                var tableName = API_THROTTLED_OUT_SUMMARY;
+                query = stringify({
+                    tableName: tableName,
+                    fieldName: "api_year_month_week_day_facet", //field which is indexed as a FACET
+                    query: "_apiPublisher:" + username + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    start: 0,
+                    count: 100
+                });
+
+                resp = connector.drillDownCategories(loggedInUser, tableName, query);
+                var dataPoints = JSON.parse(resp.getMessage());
+                var obj = dataPoints.categories;
+                var dataPointsArray = [];
+                var counter = 0;
+
+                for (var key in obj) {
+                    if (obj.hasOwnProperty(key)) {
+                        dataPointsArray.push({
+                            "id": counter,
+                            "text": key
+                        });
+                        counter = counter + 1;
+                    }
+                }
+                result.push(dataPointsArray);
+                break;
+            }
+            case API_SUBSCRIPTIONS_CONTENT:
+            {
+                result = [];
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+                var selectedAppValue = request.getParameter("selectedAppValue");
+
+                var tableName = API_REQUEST_SUMMARY;
+                var query = stringify({
+                    tableName: tableName,
+                    groupByField: "api_version_userId_apiPublisher_facet",
+                    parentPath: [],
+                    aggregateLevel: 0,
+                    query: "_apiPublisher:" + username + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    fields: [
+                        {
+                            fieldName: "total_request_count",
+                            aggregate: "SUM",
+                            alias: "total_SuccessCount"
+                        }
+                    ]
+                });
+
+                var resp = connector.searchWithAggregates(loggedInUser, tableName, query);
+
+                var dataPoints = JSON.parse(resp.getMessage());
+                var dataPointsArray = [];
+
+                for (var i = 0; i < dataPoints.length; i++) {
+                    var obj = dataPoints[i];
+
+                    var key = obj.values.api_version_userId_apiPublisher_facet;
+
+                    var query2 = stringify({
+                        tableName: tableName,
+                        fieldName: "key_api_facet", //field which is indexed as a FACET
+                        categoryPath: [], //Path being drilled down, optional
+                        query: "_api:" + key + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "] AND _apiPublisher:" + username,
+                        start: 0,
+                        count: 100
+                    });
+
+                    resp2 = connector.drillDownCategories(loggedInUser, tableName, query2);
+                    var dataPointsDrillDown = JSON.parse(resp2.getMessage());
+                    var count = Object.keys(dataPointsDrillDown.categories).length;
+                    dataPointsArray.push({
+                        "key": key,
+                        "value": obj.values.total_SuccessCount,
+                        "weight": count
+                    });
+
+                }
+                result.push(dataPointsArray);
+                result.push(dataPoints.length);
+
+                break;
+            }
+            case API_FAULTY_INVOCATION_CONTENT:
+            {
+                result = [];
+                var timeFrom = request.getParameter("timeFrom");
+                var timeTo = request.getParameter("timeTo");
+                var tableName = API_VERSION_USAGE_SUMMARY;
+
+                var dataPointsArray = [];
+                var query = stringify({
+                    tableName: tableName,
+                    groupByField: "api_version_context_facet",
+                    parentPath: [],
+                    aggregateLevel: 1,
+                    query: "_apiPublisher:" + username + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    fields: [
+                        {
+                            fieldName: "total_request_count",
+                            aggregate: "SUM",
+                            alias: "total_RequestCount"
+                        }
+                    ]
+                });
+
+                var resp = connector.searchWithAggregates(loggedInUser, tableName, query);
+                var dataPoints = JSON.parse(resp.getMessage());
+                var queryFault = stringify({
+                    tableName: API_FAULT_SUMMARY,
+                    groupByField: "api_version_apiPublisher_context_facet",
+                    parentPath: [],
+                    aggregateLevel: 1,
+                    query: "_apiPublisher:" + username + " AND max_request_time : [" + timeFrom + " TO " + timeTo + "]",
+                    fields: [
+                        {
+                            fieldName: "total_fault_count",
+                            aggregate: "SUM",
+                            alias: "total_faultCount"
+                        }
+                    ]
+                });
+
+                var respFault = connector.searchWithAggregates(loggedInUser, "API_FAULT_SUMMARY", queryFault);
+                var faultDataPoints = JSON.parse(respFault.getMessage());
+
+                for (var key in faultDataPoints) {
+                    var tempArrayFault = [];
+                    var tempArraySuccess = [];
+                    var tempArrayFault = faultDataPoints[key].values["api_version_apiPublisher_context_facet"];
+                    for (var successKey in dataPoints) {
+                        var tempArraySuccess = dataPoints[successKey].values["api_version_context_facet"];
+                        if (tempArrayFault[0] == tempArraySuccess[0] && tempArrayFault[1] == tempArraySuccess[1]) {
+                            dataPointsArray.push({
+                                "key": tempArraySuccess[0] + ":" + tempArraySuccess[1],
+                                "value": dataPoints[successKey].values["total_RequestCount"],
+                                "EngineType": "Success"
+                            });
+                            dataPointsArray.push({
+                                "key": tempArraySuccess[0] + ":" + tempArraySuccess[1],
+                                "value": faultDataPoints[key].values["total_faultCount"],
+                                "EngineType": "Fault"
+                            });
+
+                        }
+
+                    }
+
+                }
+                result.push(dataPointsArray);
+                result.push(dataPointsArray.length);
+                break;
+            }
+            default:
+            {
+                result = '{ "status": "Failed", "message": "Unidentified operation" }';
+            }
+        }
+
+        if (result != null) {
+            if (log.isDebugEnabled()) {
+                log.debug("value of result: " + result);
+            }
+            var finalResult;
+            if (type == API_LAST_ACCESS_TIME_CONTENT || type == API_USAGE_BY_RESOURCE_PATH_CONTENT ||
+                    type == API_USAGE_BY_DESTINATION_CONTENT) {
+                finalResult = result;
+            } else {
+                finalResult = {
+                    status: "success",
+                    message: result
+                };
+            }
+            print(finalResult);
+        }
+    }
+    else {
+        print('{ "status": "Failed", "statusCode": "500", "message": "AnalyticsCachedWebServiceConnector is unavailable" }');
+    }
+
+}());
+
+%>

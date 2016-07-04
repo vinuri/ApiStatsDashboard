@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Module>
+    <ModulePrefs title="Subscriber" description="Subscriber">
+        <Require feature="pubsub-2"/>
+        <Require feature="dynamic-height"/>
+        <Require feature="setprefs"/>
+    </ModulePrefs>
+    <UserPref name="role" display_name="Gadet Role" required="true"/>
+    <Content type="html">
+        <![CDATA[
+            <head>
+                <!--&lt;!&ndash; Theme &ndash;&gt;-->
+                <link rel="stylesheet" type="text/css" href="/portal/libs/font-wso2_1.0.0/css/font-wso2.min.css" />
+                <link rel="stylesheet" type="text/css" href="/portal/libs/theme-wso2_1.0/css/theme-wso2.css" />
+                <link rel="stylesheet" type="text/css" href="/portal/commons/css/select2-4.0.0/select2.min.css" />
+                <link rel="stylesheet" type="text/css" href="/portal/commons/css/select2-4.0.0/select2.override.css" />
+                <link rel="stylesheet" type="text/css" href="/portal/commons/css/bootstrap.min.css" />
+                <link rel="stylesheet" type="text/css" href="/portal/commons/css/gadget.css" />
+                <link rel="stylesheet" type="text/css" href="css/custom.css" />
+
+                <!--&lt;!&ndash; jQuery &ndash;&gt;-->
+                <script src="/portal/commons/js/jquery-1.10.2.js"></script>
+                <script src="/portal/commons/js/moment.min.js"></script>
+                <script src="/portal/commons/js/gadget-utils.js"></script>
+                <script src="/portal/commons/js/select2-4.0.0/select2.min.js"></script>
+                <script src="/portal/commons/js/bootstrap-paginator.min.js"></script>
+
+                <!--&lt;!&ndash; Include VizGrammar &ndash;&gt;-->
+                <script src="/portal/commons/js/d3.min.js"></script>
+                <script src="/portal/commons/js/vega.js"></script>
+                <script src="/portal/commons/js/VizGrammar.min.js"></script>
+                <script src="/portal/extensions/themes/analytics/js/colorbrewer.js"></script>
+                <script src="/portal/extensions/themes/analytics/js/VizGrammarSettings.js"></script>
+
+                <!--&lt;!&ndash; Custom &ndash;&gt;-->
+                <script src="js/gadgetconf.js"></script>
+                <script src="js/main.js"></script>
+
+                <!--&lt;!&ndash;Twitter typeahead&ndash;&gt;-->
+                <script src="/portal/commons/js/typeahead.bundle.js"></script>
+            </head>
+            <body class="nano">
+                <div class="nano-content">
+                    <div class="clearfix" id="filterGroup">
+                        <div class="col-12" style="padding-top: 10px;">
+
+                            <div id="ApiFilterGroup">
+                                <div class="col-1" style="text-align: center; padding-top: 10px">
+                                    <label id="lblApiFilter">API</label>
+                                </div>
+                                <div class="col-4">
+                                    <select id="apiFilter" class="form-control" />
+                                </div>
+                            </div>
+
+                            <div class="col-3" style="text-align: center; padding-top: 10px">
+                                <label id="lblFilter">Application</label>
+                            </div>
+                            <div class="col-4">
+                                <select id="selectFilter" class="form-control" />
+                            </div>
+
+                        </div>
+                        <div class="clearfix"></div>
+                    </div>
+                    <div class="successChart clearfix">
+                        <div id="canvasSuccess"></div>
+                        <div id="idSuccessPaginate"></div>
+                    </div>
+                </div>
+            </body>
+        ]]>
+    </Content>
+</Module>
