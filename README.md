@@ -5,13 +5,17 @@ Applies To        : Data Analytics Server 3.0.1
 	            API Manager 1.10
 
 DESCRIPTION
+
 ——————— 
+
 This Dashboard is created to display the APIM publisher statistics in the DAS. This Dashboard is designed with the new Dashboard theme. Please note that the new theme will  effect all the available dashboards as well.
 
 Scope parameter is added to the APIM_STAT_SCRIPT under the DAS Analytics Scripts
 
 INSTALLATION INSTRUCTIONS
+
 ———————————————
+
 
 (i) Add the api-Statistics resource to the registry ‘/_system/config/ues/dashboards’
 (ii) Open the APIM_STAT_SCRIPT  under  the DAS Analytics Scripts
